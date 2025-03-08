@@ -9,10 +9,15 @@ try:
     from hydra.core.config_store import ConfigStore
     from omegaconf import DictConfig, OmegaConf, MISSING
 except ImportError:
-    raise ImportError("Hydra is not installed. Please install it by running 'pip install hydra-core'.")
+    raise ImportError(
+        "Hydra is not installed. Please install it by running 'pip install hydra-core'."
+    )
 
 from isaaclab.utils.dict import update_class_from_dict
-from isaaclab.envs.utils.spaces import replace_env_cfg_spaces_with_strings, replace_strings_with_env_cfg_spaces
+from isaaclab.envs.utils.spaces import (
+    replace_env_cfg_spaces_with_strings,
+    replace_strings_with_env_cfg_spaces,
+)
 from isaaclab.utils import replace_slices_with_strings, replace_strings_with_slices
 from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
@@ -20,6 +25,7 @@ from wheeledlab_rl.configs import *
 import wheeledlab_rl.configs as configs
 
 cs = ConfigStore.instance()
+
 
 def _consolidate_resolved_cfgs(run_cfg: RunConfig):
     assert run_cfg.env is not MISSING, "Environment configuration is missing"
@@ -38,31 +44,39 @@ def _consolidate_resolved_cfgs(run_cfg: RunConfig):
         log.no_checkpoints = True
 
 
-def rl_run_cfg_from_dict(run_cfg:DictConfig, run_config_name: str, cfg: Dict[str, Any], env_cfg_class=None, agent_cfg_class=None) -> RunConfig:
-    '''Returns the RunConfig object from the dictionary representation of the configclass object. Used
+def rl_run_cfg_from_dict(
+    run_cfg: DictConfig,
+    run_config_name: str,
+    cfg: Dict[str, Any],
+    env_cfg_class=None,
+    agent_cfg_class=None,
+) -> RunConfig:
+    """Returns the RunConfig object from the dictionary representation of the configclass object. Used
     to recover @property values from composed configs
     TODO: implement for arbitrary configclasses
-    '''
+    """
 
     # Fill default run config with train, env, and agent of loaded config
-    update_run_cfg: RunConfig = getattr(configs, run_config_name)() # default run config from module
+    update_run_cfg: RunConfig = getattr(
+        configs, run_config_name
+    )()  # default run config from module
     update_class_from_dict(update_run_cfg.train, run_cfg.train)
-    update_run_cfg.env_setup.from_dict(cfg['env_setup'])
-    update_run_cfg.agent_setup.from_dict(cfg['agent_setup'])
-    update_run_cfg.train.from_dict(cfg['train'])
+    update_run_cfg.env_setup.from_dict(cfg["env_setup"])
+    update_run_cfg.agent_setup.from_dict(cfg["agent_setup"])
+    update_run_cfg.train.from_dict(cfg["train"])
 
     # Construct configclasses for missing types
     if env_cfg_class:
         update_run_cfg.env = env_cfg_class()
-        update_run_cfg.env.from_dict(cfg['env'])
+        update_run_cfg.env.from_dict(cfg["env"])
     else:
-        update_run_cfg.env = cfg['env']
+        update_run_cfg.env = cfg["env"]
 
     if agent_cfg_class:
         update_run_cfg.agent = agent_cfg_class()
-        update_run_cfg.agent.from_dict(cfg['agent'])
+        update_run_cfg.agent.from_dict(cfg["agent"])
     else:
-        update_run_cfg.agent = cfg['agent']
+        update_run_cfg.agent = cfg["agent"]
 
     return update_run_cfg
 
@@ -99,8 +113,7 @@ def register_run_to_hydra(run_config_name: str, node: Any):
     return env_cfg, agent_cfg
 
 
-# def hydra_run_config(run_config_name:str, node:Any, auto_resolve_conflicts=True) -> Callable:
-def hydra_run_config(run_config_name:str, auto_resolve_conflicts=True) -> Callable:
+def hydra_run_config(run_config_name: str, auto_resolve_conflicts=True) -> Callable:
     """Decorator to handle the Hydra configuration for a task.
 
     This decorator registers the task to Hydra and updates the environment and agent configurations from Hydra parsed
@@ -111,47 +124,56 @@ def hydra_run_config(run_config_name:str, auto_resolve_conflicts=True) -> Callab
         agent_cfg_entry_point: The entry point key to resolve the agent's configuration file.
 
     Returns:
-        The decorated function with the envrionment's and agent's configurations updated from command line arguments.
+        The decorated function with the environment's and agent's configurations updated from command line arguments.
     """
 
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # env_cfg, agent_cfg = register_run_to_hydra(run_config_name, node)
-
             # Load configs from registries using run config name
             run_cfg = cs.repo.get(run_config_name + ".yaml").node
             if run_cfg is None:
-                raise ValueError(f"Run config {run_config_name} not found in the Hydra registry.")
-
-            task_name = run_cfg.env_setup.task_name
-            env_cfg = load_cfg_from_registry(task_name, "env_cfg_entry_point")
-            agent_cfg = load_cfg_from_registry(task_name, run_cfg.agent_setup.entry_point)
+                raise ValueError(
+                    f"Run config {run_config_name} not found in the Hydra registry."
+                )
 
             # define the new Hydra main function
             @hydra.main(config_name=run_config_name, version_base="1.3")
-            def hydra_main(hydra_env_cfg: DictConfig, env_cfg=env_cfg, agent_cfg=agent_cfg,
-                           run_cfg=run_cfg, run_config_name: str=run_config_name):
-
+            def hydra_main(
+                hydra_env_cfg: DictConfig,
+                run_cfg=run_cfg,
+                run_config_name: str = run_config_name,
+            ):
                 # convert to a native dictionary
                 hydra_env_cfg = OmegaConf.to_container(hydra_env_cfg, resolve=True)
 
                 # replace string with slices because OmegaConf does not support slices
                 hydra_env_cfg = replace_strings_with_slices(hydra_env_cfg)
 
-                # update the configs with the Hydra command line arguments
-                env_cfg.from_dict(hydra_env_cfg["env"])
+                # Update run_cfg with CLI overrides.
+                run_cfg = rl_run_cfg_from_dict(run_cfg, run_config_name, hydra_env_cfg)
 
-                # replace strings that represent gymnasium spaces because OmegaConf does not support them.
-                # this must be done after converting the env configs from dictionary to avoid internal reinterpretations
-                replace_strings_with_env_cfg_spaces(env_cfg)
+                # Now, reload the environment and agent configs using the (possibly updated) task name.
+                task_name = run_cfg.env_setup.task_name
+                new_env_cfg = load_cfg_from_registry(task_name, "env_cfg_entry_point")
+                new_agent_cfg = load_cfg_from_registry(
+                    task_name, run_cfg.agent_setup.entry_point
+                )
 
-                # call the original function
-                # run_cfg = node()
-                # run_cfg._from_dict(hydra_env_cfg, env_cfg_class=env_cfg.__class__,
-                #                    agent_cfg_class=agent_cfg.__class__)
-                run_cfg = rl_run_cfg_from_dict(run_cfg, run_config_name, hydra_env_cfg, env_cfg_class=env_cfg.__class__,
-                                          agent_cfg_class=agent_cfg.__class__)
+                # Update the new environment config with any CLI provided env overrides.
+                new_env_cfg.from_dict(hydra_env_cfg["env"])
+                replace_strings_with_env_cfg_spaces(new_env_cfg)
+
+                # Overwrite run_cfg's env and agent with the updated registry configs.
+                run_cfg.env = (
+                    new_env_cfg.to_dict()
+                    if hasattr(new_env_cfg, "to_dict")
+                    else new_env_cfg
+                )
+                if isinstance(new_agent_cfg, dict):
+                    run_cfg.agent = new_agent_cfg
+                else:
+                    run_cfg.agent = new_agent_cfg.to_dict()
 
                 # Resolve interdependencies between various config params (e.g. env.num_envs = env_setup.num_envs)
                 if auto_resolve_conflicts:
