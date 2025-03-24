@@ -37,15 +37,16 @@ MAX_SPEED = 3.0  # (m/s) For action and reward
 
 
 @configclass
-class DriftTerrainImporterCfg(TerrainImporterCfg):
+class RaceTerrainImporterCfg(TerrainImporterCfg):
     height = 0.0
-    prim_path = "/World/ground"
-    terrain_type = "plane"
+    prim_path = "/World/track"
+    terrain_type = "usd"
+    usd_path = f"{WHEELEDLAB_ASSETS_DATA_DIR}/Terrains/track.usd"
     collision_group = -1
     physics_material = sim_utils.RigidBodyMaterialCfg(  # Material for carpet
         friction_combine_mode="multiply",
         restitution_combine_mode="multiply",
-        static_friction=1.1,
+        static_friction=1.0,
         dynamic_friction=1.0,
     )
     debug_vis = False
@@ -55,9 +56,9 @@ class DriftTerrainImporterCfg(TerrainImporterCfg):
 class F1tenthRaceSceneCfg(InteractiveSceneCfg):
     """Configuration for a Mushr car Scene with racetrack terrain with no sensors"""
 
-    terrain = DriftTerrainImporterCfg()
+    terrain = RaceTerrainImporterCfg()
 
-    robot: ArticulationCfg = MUSHR_SUS_2WD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot: ArticulationCfg = F1TENTH_CFG
 
     # lights
     light = AssetBaseCfg(
@@ -97,7 +98,7 @@ class RaceEventsCfg:
 
 
 @configclass
-class DriftEventsRandomCfg(RaceEventsCfg):
+class RaceEventsRandomCfg(RaceEventsCfg):
     change_wheel_friction = EventTerm(
         func=mdp.randomize_rigid_body_material,
         mode="startup",
@@ -296,7 +297,7 @@ def turn_left_go_right(env, ang_vel_thresh: float = torch.pi / 4):
 
 
 @configclass
-class DriftRewardsCfg:
+class RaceRewardsCfg:
     """Reward terms for the MDP."""
 
     side_slip = RewTerm(
@@ -356,7 +357,7 @@ class DriftRewardsCfg:
 
 
 @configclass
-class DriftCurriculumCfg:
+class RaceCurriculumCfg:
     more_slip = CurrTerm(
         func=increase_reward_weight_over_time,
         params={
@@ -404,7 +405,7 @@ def cart_off_track(
 
 
 @configclass
-class DriftTerminationsCfg:
+class RaceTerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     out_of_bounds = DoneTerm(
@@ -435,10 +436,10 @@ class F1tenthRaceRLEnvCfg(ManagerBasedRLEnvCfg):
     actions: MushrRWDActionCfg = MushrRWDActionCfg()
 
     # MDP Settings
-    rewards: DriftRewardsCfg = DriftRewardsCfg()
-    events: RaceEventsCfg = DriftEventsRandomCfg()
-    terminations: DriftTerminationsCfg = DriftTerminationsCfg()
-    curriculum: DriftCurriculumCfg = DriftCurriculumCfg()
+    rewards: RaceRewardsCfg = RaceRewardsCfg()
+    events: RaceEventsCfg = RaceEventsRandomCfg()
+    terminations: RaceTerminationsCfg = RaceTerminationsCfg()
+    curriculum: RaceCurriculumCfg = RaceCurriculumCfg()
 
     def __post_init__(self):
         """Post initialization."""
@@ -472,7 +473,7 @@ class F1tenthRaceRLEnvCfg(ManagerBasedRLEnvCfg):
 class F1tenthRacePlayEnvCfg(F1tenthRaceRLEnvCfg):
     """no terminations"""
 
-    events: RaceEventsCfg = DriftEventsRandomCfg(
+    events: RaceEventsCfg = RaceEventsRandomCfg(
         reset_root_state=EventTerm(
             func=reset_root_state_along_track,
             params={
@@ -483,9 +484,9 @@ class F1tenthRacePlayEnvCfg(F1tenthRaceRLEnvCfg):
         )
     )
 
-    rewards: DriftRewardsCfg = None
-    terminations: DriftTerminationsCfg = None
-    curriculum: DriftCurriculumCfg = None
+    rewards: RaceRewardsCfg = None
+    terminations: RaceTerminationsCfg = None
+    curriculum: RaceCurriculumCfg = None
 
     def __post_init__(self):
         super().__post_init__()
